@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import astropy.units as u
+
 import pdb
 
 def NewtonRaphson( g, gp, x0, tol, args = () ):
@@ -91,17 +93,27 @@ def toObsFrame( posvec, W, I, w ):
 
     return np.dot( rotmat, posvec )
 
-e = 0.5
-a = 1.0
-W = np.pi / 4
-I = np.pi / 5
-w = np.pi / 3
+a = 5.0; M1 = 1.0; M2 = 0.1; P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
+e = 0; W = 0.0; I = np.pi/4; w = 0.0; t0 = 0.0
 
-Marr = np.linspace( 0, 2 * np.pi, 10000 )
+a = 0.4564; M1 = 1.018; M2 = 4.114 * u.jupiterMass.to('solMass'); P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
+e = 0.934; W = 0.0; I = 89.232 * np.pi / 180; w = 300.77 * np.pi / 180.0; t0 = 0.0
+astar = M2 / ( M1 + M2 ) * a
 
-Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( e, x ) ) for x in Marr ] )
+tarr = np.linspace( 0.0, 2*P, 10000 )
+Marr = 2.0 * np.pi * tarr / P
+
+#Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( e, x ) ) for x in Marr ] )
+x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( 0.7, x ) ) for x in Marr ] )
+x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.8, Marr[i] ) ) for i in range( Marr.size ) ] )
+x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.85, Marr[i] ) ) for i in range( Marr.size ) ] )
+x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.9, Marr[i] ) ) for i in range( Marr.size ) ] )
+Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( e, Marr[i] ) ) for i in range( Marr.size ) ] )
 farr = 2.0 * np.arctan( np.sqrt( ( 1 + e ) / ( 1 - e ) ) * np.tan( Earr / 2.0 ) )
 rarr = a * ( 1.0 - e * np.cos( Earr ) )
+
+plt.plot( Marr, Earr )
+plt.show()
 
 xarr = rarr * np.cos( farr )
 yarr = rarr * np.sin( farr )
@@ -110,13 +122,24 @@ obscoos = np.array( [ toObsFrame( np.array( [ xarr[i], yarr[i], 0.0 ] ), W, I, w
 Xarr = obscoos[:,0]; Yarr = obscoos[:,1]; Zarr = obscoos[:,2]
 Rarr = np.sqrt( Xarr ** 2.0 + Yarr ** 2.0 )
 
+plt.figure()
 plt.plot( Xarr, Yarr, 'k-' )
 plt.plot( xarr, yarr, 'r--' )
-plt.show()
+plt.vlines( 0.0, -u.solRad.to('au'), 0.0, color = 'r' )
 
-plt.clf()
-plt.plot( Earr, Rarr, 'k-' )
-plt.plot( Earr, rarr, 'r--' )
+plt.figure()
+plt.plot( tarr, Rarr, 'k-' )
+plt.plot( tarr, rarr, 'r--' )
 for x in [ -1, 1 ]:
     plt.axhline( y = a * ( 1.0 + x * e ), color = 'r' )
 plt.show()
+
+n = 2 * np.pi / ( P * u.yr.to('s') )
+Zdot = n * astar * u.au.to('km') * np.sin(I) / np.sqrt( 1 - e ** 2 ) * ( np.cos( w + farr ) + e * np.cos(w) )
+
+plt.plot( tarr, np.gradient( Zarr * astar / a * u.au.to('km'), np.diff(tarr*u.yr.to('s'))[0] ), 'k-' )
+plt.plot( tarr, Zdot, 'r--' )
+plt.show()
+
+#pdb.set_trace()
+
