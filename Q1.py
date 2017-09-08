@@ -93,53 +93,69 @@ def toObsFrame( posvec, W, I, w ):
 
     return np.dot( rotmat, posvec )
 
-a = 5.0; M1 = 1.0; M2 = 0.1; P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
-e = 0; W = 0.0; I = np.pi/4; w = 0.0; t0 = 0.0
+def PlotOrbit( a, e, W, I, w, t0, P ):
+    tarr = np.linspace( 0.0, P, 10000 )
+    Marr = 2.0 * np.pi * tarr / P
 
-a = 0.4564; M1 = 1.018; M2 = 4.114 * u.jupiterMass.to('solMass'); P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
-e = 0.934; W = 0.0; I = 89.232 * np.pi / 180; w = 300.77 * np.pi / 180.0; t0 = 0.0
-astar = M2 / ( M1 + M2 ) * a
+    Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( e, x ) ) for x in Marr ] )
+    farr = 2.0 * np.arctan( np.sqrt( ( 1 + e ) / ( 1 - e ) ) * np.tan( Earr / 2.0 ) )
 
-tarr = np.linspace( 0.0, 2*P, 10000 )
-Marr = 2.0 * np.pi * tarr / P
+    rarr = a * ( 1.0 - e * np.cos( Earr ) )
+    xarr = rarr * np.cos( farr )
+    yarr = rarr * np.sin( farr )
 
-#Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( e, x ) ) for x in Marr ] )
-x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( 0.7, x ) ) for x in Marr ] )
-x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.8, Marr[i] ) ) for i in range( Marr.size ) ] )
-x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.85, Marr[i] ) ) for i in range( Marr.size ) ] )
-x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.9, Marr[i] ) ) for i in range( Marr.size ) ] )
-Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( e, Marr[i] ) ) for i in range( Marr.size ) ] )
-farr = 2.0 * np.arctan( np.sqrt( ( 1 + e ) / ( 1 - e ) ) * np.tan( Earr / 2.0 ) )
-rarr = a * ( 1.0 - e * np.cos( Earr ) )
+    Xarr, Yarr, Zarr = np.array( [ toObsFrame( np.array( [ xarr[i], yarr[i], 0.0 ] ), W, I, w ) for i in range( xarr.size ) ] ).T
+    Rarr = np.sqrt( Xarr ** 2.0 + Yarr ** 2.0 )
+    
+    plt.figure()
+    plt.plot( Xarr, Yarr, 'k-' )
+    plt.plot( xarr, yarr, 'r--' )
 
-plt.plot( Marr, Earr )
-plt.show()
+    plt.figure()
+    plt.plot( tarr, Rarr, 'k-' )
+    plt.plot( tarr, rarr, 'r--' )
+    for x in [ -1.0, 1.0 ]:
+        plt.axhline( y = a * ( 1.0 + x * e ), color = 'b', linestyle = ':' )
 
-xarr = rarr * np.cos( farr )
-yarr = rarr * np.sin( farr )
+    plt.show()
 
-obscoos = np.array( [ toObsFrame( np.array( [ xarr[i], yarr[i], 0.0 ] ), W, I, w ) for i in range( xarr.size ) ] )
-Xarr = obscoos[:,0]; Yarr = obscoos[:,1]; Zarr = obscoos[:,2]
-Rarr = np.sqrt( Xarr ** 2.0 + Yarr ** 2.0 )
+    return None
 
-plt.figure()
-plt.plot( Xarr, Yarr, 'k-' )
-plt.plot( xarr, yarr, 'r--' )
-plt.vlines( 0.0, -u.solRad.to('au'), 0.0, color = 'r' )
+##### Question 1
 
-plt.figure()
-plt.plot( tarr, Rarr, 'k-' )
-plt.plot( tarr, rarr, 'r--' )
-for x in [ -1, 1 ]:
-    plt.axhline( y = a * ( 1.0 + x * e ), color = 'r' )
-plt.show()
+# Set orbital parameters
+a = 0.4564; e = 0.2; W = 0.0; I = 89.232 * np.pi / 180; w = 300.77 * np.pi / 180.0; t0 = 0.0
+M1 = 1.018; M2 = 4.114 * u.jupiterMass.to('solMass');
 
-n = 2 * np.pi / ( P * u.yr.to('s') )
-Zdot = n * astar * u.au.to('km') * np.sin(I) / np.sqrt( 1 - e ** 2 ) * ( np.cos( w + farr ) + e * np.cos(w) )
+P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
 
-plt.plot( tarr, np.gradient( Zarr * astar / a * u.au.to('km'), np.diff(tarr*u.yr.to('s'))[0] ), 'k-' )
-plt.plot( tarr, Zdot, 'r--' )
-plt.show()
+#PlotOrbit( a, e, W, I, w, t0, P )
 
-#pdb.set_trace()
+t = P / 2.0
+M = 2.0 * np.pi * t / P
+E = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( e, M ) )
+f = 2.0 * np.arctan( np.sqrt( ( 1 + e ) / ( 1 - e ) ) * np.tan( E / 2.0 ) )
 
+r = a * ( 1.0 - e * np.cos( E ) )
+x = r * np.cos( f )
+y = r * np.sin( f )
+
+X, Y, Z = toObsFrame( np.array( [ x, y, 0.0 ] ), W, I, w )
+R       = np.sqrt( X ** 2.0 + Y ** 2.0 )
+
+print R
+
+# astar = M2 / ( M1 + M2 ) * a
+
+# n     = 2 * np.pi / ( P * u.yr.to('s') )
+# Zdot  = n * astar * u.au.to('km') * np.sin(I) / np.sqrt( 1 - e ** 2 ) * ( np.cos( w + farr ) + e * np.cos(w) )
+
+# plt.plot( tarr, np.gradient( Zarr * astar / a * u.au.to('km'), np.diff(tarr*u.yr.to('s'))[0] ), 'k-' )
+# plt.plot( tarr, Zdot, 'r--' )
+# plt.show()
+
+# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( 0.7, x ) ) for x in Marr ] )
+# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.8, Marr[i] ) ) for i in range( Marr.size ) ] )
+# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.85, Marr[i] ) ) for i in range( Marr.size ) ] )
+# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.9, Marr[i] ) ) for i in range( Marr.size ) ] )
+# Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( e, Marr[i] ) ) for i in range( Marr.size ) ] )
