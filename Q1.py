@@ -32,16 +32,18 @@ def zRotMatrix( t ):
 
 class OrbitPredictor():
 
-    def __init__( self, a, e, W, I, w, t0, M1, M2 ):
-        self.a  = a
-        self.e  = e
-        self.W  = W
-        self.I  = I
-        self.w  = w
-        self.t0 = t0
-        self.M1 = M1
-        self.M2 = M2
-
+    def __init__( self, a, e, W, I, w, t0, M1, M2, p ):
+        self.a  = a  # Semimajor axis planet wrt star
+        self.e  = e  # Eccentricity
+        self.W  = W  # Longitude of ascending node
+        self.I  = I  # Inclination
+        self.w  = w  # Argument of periapse
+        self.t0 = t0 # Time of periapse
+        self.M1 = M1 # Mass of star
+        self.M2 = M2 # Mass of planet
+        self.p  = p  # Parallax of system
+        
+        self.d  = 1 / self.p * u.pc.to('au')
         self.q  = M2 / M1
         self.P  = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
         self.a1 = self.q / ( 1.0 + self.q ) * a
@@ -54,7 +56,7 @@ class OrbitPredictor():
         if posvec.shape[0] == posvec.size: return np.dot( rotmat, posvec )
         else: return np.array( [ np.dot( rotmat, posvec[:,i] ) for i in range( posvec.shape[1] ) ] ).T
 
-    def retSepPA( self, t ):
+    def SepPAwrtStar( self, t ):
 
         M = 2.0 * np.pi * ( t - self.t0 ) / self.P
         E = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( self.e, M ) )
@@ -71,7 +73,34 @@ class OrbitPredictor():
         if angle < 0.0: PA = np.degrees( angle + 2.0 * np.pi )
         else:           PA = np.degrees( angle )
 
-        return R, PA    
+        projsep = R / self.d * u.rad.to('mas')
+
+        return projsep, PA
+
+    def SepPAwrtCoM( self, t ):
+
+        M = 2.0 * np.pi * ( t - self.t0 ) / self.P
+        E = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( self.e, M ) )
+        f = 2.0 * np.arctan( np.sqrt( ( 1 + self.e ) / ( 1 - self.e ) ) * np.tan( E / 2.0 ) )
+
+        r1 = self.a1 * ( 1 - self.e * np.cos( E ) )
+        x1 = r1 * np.cos( f )
+        y1 = r1 * np.sin( f )
+
+        r2 = self.a2 * ( 1 - self.e * np.cos( E ) )
+        x2 = r2 * np.cos( f )
+        y2 = r2 * np.cos( f )
+
+        X1, Y1, Z1 = self.toObsFrame( np.array( [ x1, y1, 0.0 ] ) )
+        X2, Y2, Z2 = self.toObsFrame( np.array( [ x2, y2, 0.0 ] ) )
+
+        R1 = np.sqrt( X1 ** 2.0 + Y1 ** 2.0 )
+        R2 = np.sqrt( X2 ** 2.0 + Y2 ** 2.0 )
+
+        sep1 = R1 / self.d * u.rad.to('mas')
+        sep2 = R2 / self.d * u.rad.to('mas')
+
+        return sep1, sep2
         
     def PlotOrbit( self ):
         tarr = np.linspace( 0.0, self.P, 10000 )
@@ -102,17 +131,17 @@ class OrbitPredictor():
 
 ##### Question 1
 
-# Set orbital parameters
+# Set orbital parameters - HD80606
 a = 0.4564; e = 0.2; W = 0.0; I = 89.232 * np.pi / 180; w = 300.77 * np.pi / 180.0; t0 = 0.0
-M1 = 1.018; M2 = 4.114 * u.jupiterMass.to('solMass');
+M1 = 1.018; M2 = 4.114 * u.jupiterMass.to('solMass'); p = 15.3e-3
 
 P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
 
 t = 2 * P / 5
 
-orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2 )
-r, t  = orbit.retSepPA(t)
-print r, t
+orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2, p )
+print orbit.SepPAwrtStar(0)
+print orbit.SepPAwrtCoM(0)
 
 # astar = M2 / ( M1 + M2 ) * a
 
