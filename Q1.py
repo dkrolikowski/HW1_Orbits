@@ -2,17 +2,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import astropy.units as u
 
+from scipy import signal
+from astropy.time import Time
+
 import pdb
 
 def NewtonRaphson( g, gp, x0, tol, args = () ):
     err = 2 * tol # Initialize error to be larger than tolerance
-
     while err > tol:
-        xnew = x0 - g( x0, args ) / gp( x0, args ) # Calculate next x guess
-        err  = ( xnew - x0 ) / x0                  # Calculate relative error
-        x0   = xnew                                # Set x0 to xnew for loop
+       xnew = x0 - g( x0, args ) / gp( x0, args ) # Calculate next x guess
+       err  = ( xnew - x0 ) / x0                  # Calculate relative error
+       x0   = xnew                                # Set x0 to xnew for loop
         
-    return xnew
+    return x0
 
 def KeplerEq( E, args ):
     e, M = args
@@ -24,11 +26,18 @@ def KeplerEqPrime( E, args ):
 
     return 1.0 - e * np.cos( E )
 
-def xRotMatrix( t ):
-    return np.array( [ [ 1, 0, 0 ], [ 0, np.cos(t), - np.sin(t) ], [ 0, np.sin(t), np.cos(t) ] ] )
+def RotMatrix( t, axis ):
+    if axis == 'x': return np.array( [ [ 1, 0, 0 ], [ 0, np.cos(t), - np.sin(t) ], [ 0, np.sin(t), np.cos(t) ] ] )
+    elif axis == 'z': return np.array( [ [ np.cos(t), - np.sin(t), 0 ], [ np.sin(t), np.cos(t), 0 ], [ 0, 0, 1 ] ] )
 
-def zRotMatrix( t ):
-    return np.array( [ [ np.cos(t), - np.sin(t), 0 ], [ np.sin(t), np.cos(t), 0 ], [ 0, 0, 1 ] ] )
+def getPA( x, y ):
+
+    angle = np.arctan2( y, x ) - np.pi / 2.0
+
+    if angle < 0.0: PA = np.degrees( angle + 2.0 * np.pi )
+    else:           PA = np.degrees( angle )
+
+    return PA
 
 class OrbitPredictor():
 
@@ -42,118 +51,163 @@ class OrbitPredictor():
         self.M1 = M1 # Mass of star
         self.M2 = M2 # Mass of planet
         self.p  = p  # Parallax of system
-        
+
+        self.ws = w - np.pi # w of star, offset from planet by pi
         self.d  = 1 / self.p * u.pc.to('au')
         self.q  = M2 / M1
         self.P  = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
         self.a1 = self.q / ( 1.0 + self.q ) * a
         self.a2 = 1.0 / ( 1.0 + self.q ) * a
+        
+    def getf_r( self, t ):
 
-    def toObsFrame( self, posvec ):
+        M = 2.0 * np.pi * ( t - self.t0 ) / self.P
 
-        rotmat = np.dot( np.dot( zRotMatrix( self.W ), xRotMatrix( self.I ) ), zRotMatrix( self.w ) )
+        if np.isscalar( M ):
+            if e > 0.8: x0 = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( 0.75, M ) )
+            else:       x0 = M
+
+            E = NewtonRaphson( KeplerEq, KeplerEqPrime, x0, 1e-9, ( self.e, M ) )
+            
+        else:
+            if e > 0.8: x0 = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( 0.75, x ) ) for x in M ] )
+            else:       x0 = M
+
+            E = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( self.e, M[i] ) ) for i in range( M.size ) ] )
+
+        f = 2.0 * np.arctan( np.sqrt( ( 1 + self.e ) / ( 1 - self.e ) ) * np.tan( E / 2.0 ) )
+        r = self.a * ( 1 - self.e * np.cos( E ) )
+        
+        return f, r
+
+    def toObsFrame( self, posvec, w ):
+
+        rotmat = np.dot( np.dot( RotMatrix( self.W, 'z' ), RotMatrix( self.I, 'x' ) ), RotMatrix( w, 'z' ) )
 
         if posvec.shape[0] == posvec.size: return np.dot( rotmat, posvec )
         else: return np.array( [ np.dot( rotmat, posvec[:,i] ) for i in range( posvec.shape[1] ) ] ).T
 
-    def SepPAwrtStar( self, t ):
+    def getXYZ( self, a, w, t, retInOrbit = False ):
 
-        M = 2.0 * np.pi * ( t - self.t0 ) / self.P
-        E = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( self.e, M ) )
-        f = 2.0 * np.arctan( np.sqrt( ( 1 + self.e ) / ( 1 - self.e ) ) * np.tan( E / 2.0 ) )
+        f, r = self.getf_r( t )
+        r    = r * a / self.a
 
-        r = self.a * ( 1 - self.e * np.cos( E ) )
         x = r * np.cos( f )
         y = r * np.sin( f )
 
-        X, Y, Z = self.toObsFrame( np.array( [ x, y, 0.0 ] ) )
-        R       = np.sqrt( X ** 2.0 + Y ** 2.0 )
+        X, Y, Z = self.toObsFrame( np.array( [ x, y, 0.0 ] ), w )
 
-        angle = np.arctan2( Y, X ) - np.pi / 2.0
-        if angle < 0.0: PA = np.degrees( angle + 2.0 * np.pi )
-        else:           PA = np.degrees( angle )
+        if retInOrbit: return X, Y, Z, x, y
+        else:          return X, Y, Z
 
-        projsep = R / self.d * u.rad.to('mas')
+    def getSepPA( self, t ):
 
-        return projsep, PA
+        X, Y, Z    = self.getXYZ( self.a, self.w, t )
+        Xp, Yp, Zp = self.getXYZ( self.a2, self.w, t )
+        Xs, Ys, Zs = self.getXYZ( self.a1, self.ws, t )
 
-    def SepPAwrtCoM( self, t ):
+        wrtStar = [ np.sqrt( X ** 2.0 + Y ** 2.0 ) / self.d * u.rad.to('mas'), getPA( X, Y ) ]
+        PwrtCoM = [ np.sqrt( Xp ** 2.0 + Yp ** 2.0 ) / self.d * u.rad.to('mas'), getPA( Xp, Yp ) ]
+        SwrtCoM = [ np.sqrt( Xs ** 2.0 + Ys ** 2.0 ) / self.d * u.rad.to('mas'), getPA( Xs, Ys ) ]
 
-        M = 2.0 * np.pi * ( t - self.t0 ) / self.P
-        E = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( self.e, M ) )
-        f = 2.0 * np.arctan( np.sqrt( ( 1 + self.e ) / ( 1 - self.e ) ) * np.tan( E / 2.0 ) )
+        return wrtStar, PwrtCoM, SwrtCoM
 
-        r1 = self.a1 * ( 1 - self.e * np.cos( E ) )
-        x1 = r1 * np.cos( f )
-        y1 = r1 * np.sin( f )
+    def getRV( self, t ):
 
-        r2 = self.a2 * ( 1 - self.e * np.cos( E ) )
-        x2 = r2 * np.cos( f )
-        y2 = r2 * np.cos( f )
+        M   = 2.0 * np.pi * ( t - self.t0 ) / self.P
+        x0  = NewtonRaphson( KeplerEq, KeplerEqPrime, M, 1e-9, ( 0.7, M ) )
+        E   = NewtonRaphson( KeplerEq, KeplerEqPrime, x0, 1e-9, ( self.e, M ) )
+        f   = 2.0 * np.arctan( np.sqrt( ( 1 + self.e ) / ( 1 - self.e ) ) * np.tan( E / 2.0 ) )
 
-        X1, Y1, Z1 = self.toObsFrame( np.array( [ x1, y1, 0.0 ] ) )
-        X2, Y2, Z2 = self.toObsFrame( np.array( [ x2, y2, 0.0 ] ) )
+        A   = - ( 2.0 * np.pi * np.sin( self.I ) ) / ( self.P * np.sqrt( 1 - self.e ** 2.0 ) ) / u.km.to('AU') / u.yr.to('s')
+        RVp = A * self.a2 * ( np.cos( self.w + f ) + self.e * np.cos( self.w ) )
+        RVs = A * self.a1 * ( np.cos( self.ws + f ) + self.e * np.cos( self.ws ) )
 
-        R1 = np.sqrt( X1 ** 2.0 + Y1 ** 2.0 )
-        R2 = np.sqrt( X2 ** 2.0 + Y2 ** 2.0 )
-
-        sep1 = R1 / self.d * u.rad.to('mas')
-        sep2 = R2 / self.d * u.rad.to('mas')
-
-        return sep1, sep2
-        
+        return RVp, RVs
+                                    
     def PlotOrbit( self ):
+
         tarr = np.linspace( 0.0, self.P, 10000 )
-        Marr = 2.0 * np.pi * tarr / self.P
 
-        Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( self.e, x ) ) for x in Marr ] )
-        farr = 2.0 * np.arctan( np.sqrt( ( 1 + self.e ) / ( 1 - self.e ) ) * np.tan( Earr / 2.0 ) )
+        X, Y, Z, x, y = self.getXYZ( self.a, self.w, tarr, retInOrbit = True )
 
-        rarr = self.a * ( 1 - self.e * np.cos( Earr ) )
-        xarr = rarr * np.cos( farr )
-        yarr = rarr * np.sin( farr )
+        Xp, Yp, Zp, xp, yp = self.getXYZ( self.a2, self.w, tarr, retInOrbit = True )
+        Xs, Ys, Zs, xs, ys = self.getXYZ( self.a1, self.w + np.pi, tarr, retInOrbit = True )
 
-        Xarr, Yarr, Zarr = self.toObsFrame( np.array( [ xarr, yarr, np.zeros( xarr.size ) ] ) )
-        Rarr             = np.sqrt( Xarr ** 2.0 + Yarr ** 2.0 )
+        posvec     = np.array( [ xs, ys, np.zeros( xs.size ) ] )
+        xs, ys, zs = np.array( [ np.dot( RotMatrix( np.pi, 'z' ), posvec[:,i] ) for i in range( posvec.shape[1] ) ] ).T
 
         plt.figure()
-        plt.plot( tarr, Rarr, 'k-' )
-        plt.plot( tarr, rarr, 'r--' )
-        for x in [ -1, 1 ]: plt.axhline( y = self.a * ( 1 + x * self.e ), color = 'b', linestyle = ':' )
-
+        plt.plot( x, y, 'k-' )
+        plt.plot( 0, 0, 'r*' )
         plt.figure()
-        plt.plot( Xarr, Yarr, 'k-' )
-        plt.plot( xarr, yarr, 'r--' )
-
+        plt.plot( xp, yp, 'r--' )
+        plt.plot( xp[0], yp[0], 'ro' )
+        plt.plot( xs, ys, 'b--' )
+        plt.plot( xs[0], ys[0], 'bo' )
         plt.show()
 
         return None
 
-##### Question 1
+    def PlotRV( self, tarr ):
 
-# Set orbital parameters - HD80606
-a = 0.4564; e = 0.2; W = 0.0; I = 89.232 * np.pi / 180; w = 300.77 * np.pi / 180.0; t0 = 0.0
-M1 = 1.018; M2 = 4.114 * u.jupiterMass.to('solMass'); p = 15.3e-3
+        RVp, RVs = np.array( [ self.getRV( t ) for t in tarr ] ).T
+        tarrplot = tarr * u.yr.to('d') - 2451900.0
 
-P = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
+        plt.clf()
+        fig, ( axs, axp ) = plt.subplots( 2, 1, sharex = True )
 
-t = 2 * P / 5
+        axs.plot( tarrplot, RVs, 'k-' )
+        axs.set_ylabel( 'Stellar Velocity (km/s)' )
 
+        axp.plot( tarrplot, RVp, 'r-' )
+        axp.set_ylabel( 'Planet Velocity (km/s)' )
+        axp.set_xlabel( 'JD - 2451900' )
+
+        fig.subplots_adjust( hspace = 0 )
+        fig.suptitle( 'HD80606 Radial Velocity Curves' )
+
+        plt.savefig('Plots/HD80606_RV.pdf')
+
+        plt.clf()
+        plt.plot( tarrplot, RVs, 'k-' )
+        plt.ylabel( 'Radial Velocity (km/s)' )
+        plt.xlabel( 'JD - 2451900' )
+        plt.savefig( 'Plots/HD80606_StarRV.pdf' )
+        
+        return RVp, RVs
+
+##### Question 2, 3, 4 -- HD 80606 #####
+a     = 0.4564 # AU
+e     = 0.934
+W     = 0.0
+I     = 89.232 * np.pi / 180.0 # Rad
+w     = 300.77 * np.pi / 180.0 # Rad
+t0    = 2451973.72 / u.yr.to('d') # Year
+M1    = 1.018 # Sol Mass
+M2    = 4.114 * u.jupiterMass.to('solMass') # Sol Mass
+p     = 15.3e-3 # Arcsec
+P     = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
+
+# Get class instance for HD 80606 orbit
 orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2, p )
-print orbit.SepPAwrtStar(0)
-print orbit.SepPAwrtCoM(0)
+orbit.PlotOrbit() # Show orbits in orbit frame (both relative and absolute)
 
-# astar = M2 / ( M1 + M2 ) * a
+### Question 2 - Radial Velocity ###
 
-# n     = 2 * np.pi / ( P * u.yr.to('s') )
-# Zdot  = n * astar * u.au.to('km') * np.sin(I) / np.sqrt( 1 - e ** 2 ) * ( np.cos( w + farr ) + e * np.cos(w) )
+# Set dates to compute RV for
+aug1     = Time( '2017-08-01 00:00:00', scale = 'utc' ).jd
+jan1     = Time( '2018-01-01 00:00:00', scale = 'utc' ).jd
+tarr     = np.linspace( aug1, jan1, 10000 )
 
-# plt.plot( tarr, np.gradient( Zarr * astar / a * u.au.to('km'), np.diff(tarr*u.yr.to('s'))[0] ), 'k-' )
-# plt.plot( tarr, Zdot, 'r--' )
-# plt.show()
+# Plot and return planet and stellar RVs
+RVp, RVs = orbit.PlotRV( tarr / u.yr.to('d') )
 
-# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x, 1e-9, ( 0.7, x ) ) for x in Marr ] )
-# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.8, Marr[i] ) ) for i in range( Marr.size ) ] )
-# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.85, Marr[i] ) ) for i in range( Marr.size ) ] )
-# x0   = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( 0.9, Marr[i] ) ) for i in range( Marr.size ) ] )
-# Earr = np.array( [ NewtonRaphson( KeplerEq, KeplerEqPrime, x0[i], 1e-9, ( e, Marr[i] ) ) for i in range( Marr.size ) ] )
+mins     = signal.argrelmin( RVs )[0]
+maxs     = signal.argrelmax( RVs )[0]
+
+print 'RV minima occur at: '
+print Time( tarr[mins], format = 'jd' ).iso
+
+print '\nRV maxima occur at: '
+print Time( tarr[maxs], format = 'jd' ).iso
