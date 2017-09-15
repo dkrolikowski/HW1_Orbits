@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import astropy.units as u
+import matplotlib as mpl
 
 from scipy import signal
 from astropy.time import Time
@@ -41,7 +42,7 @@ def getPA( x, y ):
 
 class OrbitPredictor():
 
-    def __init__( self, a, e, W, I, w, t0, M1, M2, p ):
+    def __init__( self, a, e, W, I, w, t0, M1, M2, Rs, p ):
         self.a  = a  # Semimajor axis planet wrt star
         self.e  = e  # Eccentricity
         self.W  = W  # Longitude of ascending node
@@ -50,6 +51,7 @@ class OrbitPredictor():
         self.t0 = t0 # Time of periapse
         self.M1 = M1 # Mass of star
         self.M2 = M2 # Mass of planet
+        self.Rs = Rs # Radius of star
         self.p  = p  # Parallax of system
 
         self.ws = w - np.pi # w of star, offset from planet by pi
@@ -130,16 +132,19 @@ class OrbitPredictor():
         tarr = np.linspace( 0.0, self.P, 10000 )
 
         X, Y, Z, x, y = self.getXYZ( self.a, self.w, tarr, retInOrbit = True )
+        R = np.sqrt( X ** 2.0 + Y ** 2.0 )
+        transit = np.where( R <= u.solRad.to('au') )[0]
 
         Xp, Yp, Zp, xp, yp = self.getXYZ( self.a2, self.w, tarr, retInOrbit = True )
-        Xs, Ys, Zs, xs, ys = self.getXYZ( self.a1, self.w + np.pi, tarr, retInOrbit = True )
+        Xs, Ys, Zs, xs, ys = self.getXYZ( self.a1, self.ws, tarr, retInOrbit = True )
 
         posvec     = np.array( [ xs, ys, np.zeros( xs.size ) ] )
         xs, ys, zs = np.array( [ np.dot( RotMatrix( np.pi, 'z' ), posvec[:,i] ) for i in range( posvec.shape[1] ) ] ).T
 
         plt.figure()
         plt.plot( x, y, 'k-' )
-        plt.plot( 0, 0, 'r*' )
+        ax = plt.gca()
+        ax.add_patch(mpl.patches.Circle((0,0),radius=u.solRad.to('au'),color='r'))
         plt.figure()
         plt.plot( xp, yp, 'r--' )
         plt.plot( xp[0], yp[0], 'ro' )
@@ -147,6 +152,16 @@ class OrbitPredictor():
         plt.plot( xs[0], ys[0], 'bo' )
         plt.show()
 
+        plt.figure()
+        plt.plot( X, Y, 'k-' )
+        ax = plt.gca()
+        ax.add_patch(mpl.patches.Circle((0,0),radius=1*u.solRad.to('au'),color='r'))
+        for t in transit: ax.add_patch( mpl.patches.Circle( (X[t],Y[t]),radius=u.jupiterRad.to('au'), color='b' ) )
+        plt.figure()
+        plt.plot( Xp, Yp, 'r--' )
+        plt.plot( Xs, Ys, 'b--' )
+        plt.show()
+        
         return None
 
     def PlotRV( self, tarr ):
@@ -165,49 +180,97 @@ class OrbitPredictor():
         axp.set_xlabel( 'JD - 2451900' )
 
         fig.subplots_adjust( hspace = 0 )
-        fig.suptitle( 'HD80606 Radial Velocity Curves' )
+        fig.suptitle( 'HD 80606 Radial Velocity Curves' )
 
         plt.savefig('Plots/HD80606_RV.pdf')
 
         plt.clf()
         plt.plot( tarrplot, RVs, 'k-' )
+        plt.axhline( y = 0.0, color = 'r', ls = ':' )
         plt.ylabel( 'Radial Velocity (km/s)' )
         plt.xlabel( 'JD - 2451900' )
+        plt.title( 'HD 80606 Stellar Radial Velocity Curve' )
         plt.savefig( 'Plots/HD80606_StarRV.pdf' )
+        plt.clf()
         
         return RVp, RVs
 
+    def FindTransits( self, tarr ):
+
+        X, Y, Z = self.getXYZ( self.a, self.w, tarr / u.yr.to('d') )
+        R       = np.sqrt( X ** 2.0 + Y ** 2.0 )
+
+        transit = np.where( ( R <= self.Rs ) & ( Z > 0.0 ) )[0]
+
+        return tarr[transit]
+    
 ##### Question 2, 3, 4 -- HD 80606 #####
 a     = 0.4564 # AU
 e     = 0.934
-W     = 0.0
+W     = 160.98 * np.pi / 180.0 # Rad
 I     = 89.232 * np.pi / 180.0 # Rad
 w     = 300.77 * np.pi / 180.0 # Rad
 t0    = 2451973.72 / u.yr.to('d') # Year
 M1    = 1.018 # Sol Mass
 M2    = 4.114 * u.jupiterMass.to('solMass') # Sol Mass
+Rs    = 1.037 * u.solRad.to('au') # AU
 p     = 15.3e-3 # Arcsec
 P     = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
 
+doQ2 = False
+doQ3 = False
+
 # Get class instance for HD 80606 orbit
-orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2, p )
-orbit.PlotOrbit() # Show orbits in orbit frame (both relative and absolute)
+orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2, Rs, p )
+#orbit.PlotOrbit() # Show orbits in orbit frame (both relative and absolute)
 
 ### Question 2 - Radial Velocity ###
 
-# Set dates to compute RV for
+if doQ2:
+    # Set dates to compute RV for
+    aug1     = Time( '2017-08-01 00:00:00', scale = 'utc' ).jd
+    jan1     = Time( '2018-01-01 00:00:00', scale = 'utc' ).jd
+    tarr     = np.linspace( aug1, jan1, 100000 )
+
+    # Plot and return planet and stellar RVs
+    RVp, RVs = orbit.PlotRV( tarr / u.yr.to('d') )
+
+    mins     = signal.argrelmin( RVs )[0]
+    maxs     = signal.argrelmax( RVs )[0]
+
+    print 'RV minima occur at: '
+    print Time( tarr[mins], format = 'jd' ).iso
+
+    print '\nRV maxima occur at: '
+    print Time( tarr[maxs], format = 'jd' ).iso
+
+### Question 3 - Transits ###
+
+if doQ3:
+    transits = orbit.FindTransits( tarr )
+    transits = np.split( transits, np.where( np.diff( transits ) > 10.0 * np.median( np.diff( transits ) ) )[0] + 1 )
+    for t in transits:
+        print Time( t.min(), format = 'jd' ).iso
+        print Time( np.median(t), format = 'jd' ).iso
+        print Time( t.max(), format = 'jd' ).iso
+        print '\n'
+
+dec = 50 + 36.0 / 60.0 + 13.43 / 3600.0
+ra  = 15 * ( 9 + 22.0 / 60.0 + 37.5769 / 3600.0 )
+pma = 45.76 * u.mas.to('deg')
+pmd = 16.56 * u.mas.to('deg')
+
 aug1     = Time( '2017-08-01 00:00:00', scale = 'utc' ).jd
-jan1     = Time( '2018-01-01 00:00:00', scale = 'utc' ).jd
-tarr     = np.linspace( aug1, jan1, 10000 )
+aug5     = Time( '2023-08-01 00:00:00', scale = 'utc' ).jd
+tarr     = np.linspace( aug1, aug5, 100000 )
 
-# Plot and return planet and stellar RVs
-RVp, RVs = orbit.PlotRV( tarr / u.yr.to('d') )
+X, Y, Z = orbit.getXYZ( orbit.a1, orbit.ws, tarr / u.yr.to('d') )
+X = X / orbit.d * u.rad.to('deg') * 10
+Y = Y / orbit.d * u.rad.to('deg') * 10
 
-mins     = signal.argrelmin( RVs )[0]
-maxs     = signal.argrelmax( RVs )[0]
+CoMx = ra + pma * tarr * u.d.to('yr')
+CoMy = dec + pmd * tarr * u.d.to('yr')
 
-print 'RV minima occur at: '
-print Time( tarr[mins], format = 'jd' ).iso
-
-print '\nRV maxima occur at: '
-print Time( tarr[maxs], format = 'jd' ).iso
+plt.clf()
+plt.plot( X + CoMx, Y + CoMy )
+plt.show()
