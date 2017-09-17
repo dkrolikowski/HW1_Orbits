@@ -255,14 +255,15 @@ if doQ3:
         print Time( t.max(), format = 'jd' ).iso
         print '\n'
 
-dec = 50 + 36.0 / 60.0 + 13.43 / 3600.0
-ra  = 15 * ( 9 + 22.0 / 60.0 + 37.5769 / 3600.0 )
-pma = 45.76 * u.mas.to('deg') * u.d.to('yr')
-pmd = 16.56 * u.mas.to('deg') * u.d.to('yr')
+dec  = 50 + 36.0 / 60.0 + 13.43 / 3600.0
+ra   = 15 * ( 9 + 22.0 / 60.0 + 37.5769 / 3600.0 )
+pmas = 45.76 * u.mas.to('deg') * u.d.to('yr')
+pma  = pmas / np.cos( dec * np.pi / 180.0 )
+pmd  = 16.56 * u.mas.to('deg') * u.d.to('yr')
 
 aug1     = Time( '2017-08-01 00:00:00', scale = 'utc' ).jd
 aug5     = Time( '2023-08-01 00:00:00', scale = 'utc' ).jd
-tarr     = np.linspace( aug1, aug5, 100000 )
+tarr     = np.linspace( aug1, aug5, 100000 ) - aug1
 
 X, Y, Z = orbit.getXYZ( orbit.a1, orbit.ws, tarr / u.yr.to('d') )
 X = X / orbit.d * u.rad.to('deg')
@@ -276,4 +277,5 @@ totaly = ( Y + CoMy - dec ) * u.deg.to('mas')
 
 plt.clf()
 plt.plot( totalx, totaly )
+plt.plot( (CoMx - ra)*u.deg.to('mas'), (CoMy - dec)*u.deg.to('mas') )
 plt.show()
