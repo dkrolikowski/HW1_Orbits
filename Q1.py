@@ -1,13 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import astropy.units as u
-
 from scipy import signal
 from astropy.time import Time
 
-import pdb
-
 def NewtonRaphson( g, gp, x0, tol, args = () ):
+    # Newton Raphson root finding method
+    # g is equation to find root of, gp is its derivative, x0 is an initial guess
+    # tol is the relative error tolerance, args is a tuple of arguments for g/gp
     
     err = 2 * tol # Initialize error to be larger than tolerance
     while err > tol:
@@ -18,63 +18,32 @@ def NewtonRaphson( g, gp, x0, tol, args = () ):
     return x0
 
 def KeplerEq( E, args ):
+    # Kepler Equation to solve for eccentric anomaly
+    # E is the eccentric anomaly, args contains eccentricity and mean anomaly
     
-    e, M = args # Read in eccentricity and mean anomaly
+    e, M = args
     
     return E - e * np.sin( E ) - M
 
 def KeplerEqPrime( E, args ):
+    # Derivative of Kepler Equation to solve for eccentric anomaly
+    # E is the eccentric anomaly, args contains eccentricity and mean anomaly
     
-    e, M = args # Read in eccentricity and mean anomaly
+    e, M = args
 
     return 1.0 - e * np.cos( E )
 
 def RotMatrix( t, axis ):
+    # Rotation matrix. t is angle in rad to rotate, and axis is axis to rotate about
 
-    # Read in t (angle in rad) and axis about which to rotate
     if axis == 'x': return np.array( [ [ 1, 0, 0 ], [ 0, np.cos(t), - np.sin(t) ], [ 0, np.sin(t), np.cos(t) ] ] )
+    elif axis == 'y': return np.array( [ [ np.cos(t), 0, np.sin(t) ], [ 0, 1, 0 ], [ - np.sin(t), 0, np.cos(t) ] ] )
     elif axis == 'z': return np.array( [ [ np.cos(t), - np.sin(t), 0 ], [ np.sin(t), np.cos(t), 0 ], [ 0, 0, 1 ] ] )
-
-def getSolLon( jd ):
-
-    N   = jd - 2451545.0;
-    L   = ( 280.460 + 0.9856474 * N ) % 360.0
-    g   = ( 357.528 + 0.9856003 * N ) % 360.0
-
-    lon = ( L + 1.915 * np.sin( g * np.pi / 180.0 ) + 0.02 * np.sin( g * np.pi / 90.0 ) ) % 360.0
-
-    return np.radians( lon )
-
-def RADec_Ecliptic( ra, dec ):
-
-    eps = 23.43699 * np.pi / 180.0
-
-    lat = np.arcsin( np.sin(dec) * np.cos(eps) - np.cos(dec) * np.sin(eps) * np.sin(ra) )
-    lon = np.arccos( np.cos(ra) * np.cos(dec) / np.cos(lat) )
-
-    return lon, lat
-
-def Ecliptic_RADec( lon, lat ):
-
-    eps = 23.43699 * np.pi / 180.0
-
-    dec = np.arcsin( np.sin(lat) * np.cos(eps) + np.cos(lat) * np.sin(eps) * np.sin(lon) )
-    ra  = np.arccos( np.cos(lon) * np.cos(lat) / np.cos(dec) )
-
-    return ra, dec
-
-def getPA( x, y ):
-
-    angle = np.arctan2( y, x ) - np.pi / 2.0
-
-    if angle < 0.0: PA = np.degrees( angle + 2.0 * np.pi )
-    else:           PA = np.degrees( angle )
-
-    return PA
 
 class OrbitPredictor():
 
-    def __init__( self, a, e, W, I, w, t0, M1, M2, Rs, Rp, p, ra, dec ):
+    def __init__( self, a, e, W, I, w, t0, M1, M2, p ):
+        
         self.a   = a   # Semimajor axis planet wrt star
         self.e   = e   # Eccentricity
         self.W   = W   # Longitude of ascending node
@@ -83,14 +52,8 @@ class OrbitPredictor():
         self.t0  = t0  # Time of periapse
         self.M1  = M1  # Mass of star
         self.M2  = M2  # Mass of planet
-        self.Rs  = Rs  # Radius of star
-        self.Rp  = Rp  # Radius of planet
-        self.p   = p   # Parallax of system
-        self.ra  = ra  # Right Ascension of system
-        self.dec = dec # Declination of system
 
         self.ws  = w - np.pi # w of star, offset from planet by pi
-        self.d   = 1 / self.p * u.pc.to('au')
         self.q   = M2 / M1
         self.P   = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
         self.a1  = self.q / ( 1.0 + self.q ) * a
@@ -156,35 +119,6 @@ class OrbitPredictor():
 
         return RVp, RVs
 
-    def FindTransits( self, tarr ):
-
-        X, Y, Z = self.getXYZ( self.a, self.w, tarr )
-        R       = np.sqrt( X ** 2.0 + Y ** 2.0 ) # Calculate projected sep wrt star
-
-        # Look for when the projected sep is less than the stellar radius + planet radius (would account for grazing transits)
-        # AND when the planet is in front of the star ( z > 0.0 )
-        transit = np.where( ( R <= self.Rs + self.Rp ) & ( Z > 0.0 ) )[0]
-
-        # Return the times at which there is a transit (re-convert to days)
-        return tarr[transit] * u.yr.to('d')
-
-    def getPlxMotion( self, tarr, ra, dec ):
-
-        lon, lat = RADec_Ecliptic( ra, dec ) # Get ecliptic coordinates of the star
-        prad     = self.p * u.arcsec.to('rad')  # Convert parallax from mas to radians
-        
-        sollon   = getSolLon( tarr )               # Get ecliptic longitude of sun as function of time
-        dellon   = prad * np.sin( sollon - lon )   # Get change in longitude as function of time
-        dellat   = - prad * np.sin( lat ) * np.cos( sollon - lon ) # Get change in latitude as function of time
-
-        lon += dellon # Add dellon to lon of star
-        lat += dellat # Add dellat to lat of star
-
-        rat, dect = Ecliptic_RADec( lon, lat ) # Get ra and dec as functions of t from lon/lat
-
-        # Return movement from CoM RA/Dec
-        return rat - ra, dect - dec
-
     def PlotOrbit( self ):
 
         tarr = np.linspace( 0.0, self.P, 10000 )
@@ -220,20 +154,15 @@ w    = np.radians( 300.77 ) # Rad
 t0   = 2451973.72 / u.yr.to('d') # Year
 M1   = 1.018 # Sol Mass
 M2   = 4.114 * u.jupiterMass.to('solMass') # Sol Mass
-Rs   = 1.037 * u.solRad.to('au') # AU
-Rp   = 1.029 * u.jupiterRad.to('au')
-p    = 15.3e-3 # Arcsec
-ra   = np.radians( 140.6569379644042 ) # Gaia - radians
-dec  = np.radians( 50.60377501745222 ) # Gaia - radians
 
 P    = np.sqrt( a ** 3.0 / ( M1 + M2 ) )
 
 doQ2 = False
-doQ3 = False
-doQ4 = True
+doQ3 = True
+doQ4 = False
 
 # Get class instance for HD 80606 orbit
-orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2, Rs, Rp, p, ra, dec )
+orbit = OrbitPredictor( a, e, W, I, w, t0, M1, M2, p )
 
 # orbit.PlotOrbit() # Show orbits in orbit frame (both relative and absolute)
 
@@ -268,12 +197,28 @@ if doQ2:
 ### Question 3 - Transits ###
 
 if doQ3:
-    # Set dates to search for transits over in units of days (same as Q2)
-    aug1     = Time( '2017-08-01 00:00:00', scale = 'utc' ).jd
-    jan1     = Time( '2018-01-01 00:00:00', scale = 'utc' ).jd
-    tarr     = np.linspace( aug1, jan1, 100000 )
 
-    transits = orbit.FindTransits( tarr * u.d.to('yr') ) # Give tarr in yrs as that's what is used
+    def FindTransits( tarr, Rs, Rp ):
+
+        X, Y, Z = orbit.getXYZ( orbit.a, orbit.w, tarr )
+        R       = np.sqrt( X ** 2.0 + Y ** 2.0 ) # Calculate projected sep wrt star
+
+        # Look for when the projected sep is less than the stellar radius + planet radius (would account for grazing transits)
+        # AND when the planet is in front of the star ( z > 0.0 )
+        transit = np.where( ( R <= Rs + Rp ) & ( Z > 0.0 ) )[0]
+
+        # Return the times at which there is a transit (re-convert to days)
+        return tarr[transit] * u.yr.to('d')
+
+    # Set dates to search for transits over in units of days (same as Q2)
+    aug1 = Time( '2017-08-01 00:00:00', scale = 'utc' ).jd
+    jan1 = Time( '2018-01-01 00:00:00', scale = 'utc' ).jd
+    tarr = np.linspace( aug1, jan1, 100000 )
+
+    Rs   = 1.037 * u.solRad.to('au')
+    Rp   = 1.029 * u.jupiterRad.to('au')
+
+    transits = FindTransits( tarr * u.d.to('yr'), Rs, Rp ) # Give tarr in yrs as that's what is used
     
     # Split the transit time array into each separate transit
     transits = np.split( transits, np.where( np.diff( transits ) > 10.0 * np.median( np.diff( transits ) ) )[0] + 1 )
@@ -285,11 +230,97 @@ if doQ3:
         print Time( np.median(t), format = 'jd' ).iso
         print Time( t.max(), format = 'jd' ).iso
 
+def getSolLon( jd ):
+    # Calculate ecliptic longitude of the sun given a time in julian days
+    # Return solar longitude in radians
+
+    N   = jd - 2451545.0;
+    L   = ( 280.460 + 0.9856474 * N ) % 360.0
+    g   = ( 357.528 + 0.9856003 * N ) % 360.0
+
+    lon = ( L + 1.915 * np.sin( g * np.pi / 180.0 ) + 0.02 * np.sin( g * np.pi / 90.0 ) ) % 360.0
+
+    return np.radians( lon )
+
+def RADec_Ecliptic( ra, dec ):
+    # Convert from RA/Dec to ecliptic longitude and latitude
+    # All angles in radians
+
+    eps = 23.43699 * np.pi / 180.0
+
+    lat = np.arcsin( np.sin(dec) * np.cos(eps) - np.cos(dec) * np.sin(eps) * np.sin(ra) )
+    lon = np.arccos( np.cos(ra) * np.cos(dec) / np.cos(lat) )
+
+    return lon, lat
+
+def Ecliptic_RADec( lon, lat ):
+    # Convert from ecliptic longitude/latitue to RA and Dec
+    # All angles in radians
+
+    eps = 23.43699 * np.pi / 180.0
+
+    dec = np.arcsin( np.sin(lat) * np.cos(eps) + np.cos(lat) * np.sin(eps) * np.sin(lon) )
+    ra  = np.arccos( np.cos(lon) * np.cos(lat) / np.cos(dec) )
+
+    return ra, dec
+
+def RADecPlots( tarr, ra, dec, obst, obsra, obsdec, sig, plotname, unit = 'mas' ):
+
+    plt.clf()
+    fig, ( ( ravt, decvt ), ( radec, ax4 ) ) = plt.subplots( 2, 2 )
+
+    ravt.plot( tarr - 2400000.5, ra, 'k--' )
+    ravt.errorbar( obst - 2400000.5, obsra, yerr = sig, fmt = 'k.', ls = 'none' )
+    ravt.set_xlabel( 'MJD (JD - 2400000.5)' )
+    ravt.set_ylabel( '$\Delta$RA ('+ unit +')' )
+    ravt.xaxis.set_label_position( 'top' )
+    ravt.xaxis.set_ticks_position( 'top' )
+
+    decvt.plot( tarr - 2400000.5, dec, 'k-' )
+    decvt.errorbar( obst - 2400000.5, obsdec, yerr = sig, fmt = 'k.', ls = 'none' )
+    decvt.set_xlabel( 'MJD (JD - 2400000.5)' )
+    decvt.set_ylabel( '$\Delta$Declination ('+ unit +')' )
+    decvt.yaxis.set_label_position( 'right' )
+    decvt.yaxis.set_ticks_position( 'right' )
+    decvt.xaxis.set_label_position( 'top' )
+    decvt.xaxis.set_ticks_position( 'top' )
+
+    radec.plot( ra, dec, 'k-' )
+    radec.errorbar( obsra, obsdec, xerr = sig, yerr = sig, fmt = 'k.', ls = 'none' )
+    radec.set_xlabel( '$\Delta$RA ('+ unit +')' )
+    radec.set_ylabel( '$\Delta$Declination ('+ unit +')' )
+
+    ax4.axis( 'off' )
+
+    fig.subplots_adjust( hspace = 0.1, wspace = 0.1 )
+    
+    plt.savefig( 'Plots/' + plotname ); plt.clf()
+
+    return None
+
 if doQ4:
+
+    def getPlxMotion( tarr, ra, dec, p ):
+
+        lon, lat = RADec_Ecliptic( ra, dec ) # Get ecliptic coordinates of the star
+        prad     = p * u.arcsec.to('rad')  # Convert parallax from mas to radians
+        
+        sollon   = getSolLon( tarr )               # Get ecliptic longitude of sun as function of time
+        dellon   = prad * np.sin( sollon - lon )   # Get change in longitude as function of time
+        dellat   = - prad * np.sin( lat ) * np.cos( sollon - lon ) # Get change in latitude as function of time
+
+        lon += dellon # Add dellon to lon of star
+        lat += dellat # Add dellat to lat of star
+
+        rat, dect = Ecliptic_RADec( lon, lat ) # Get ra and dec as functions of t from lon/lat
+
+        # Return movement from CoM RA/Dec
+        return rat - ra, dect - dec
 
     ra   = np.radians( 140.6569379644042 ) # RA from Gaia
     dec  = np.radians( 50.60377501745222 ) # Dec from Gaia
-
+    p    = 15.3e-3 # arcsec
+    
     lon, lat = RADec_Ecliptic( ra, dec ) # Get ecliptic coordinates of the star
 
     pma = 45.76 * u.mas.to('rad') * u.d.to('yr') # Convert pm from mas/yr to rad/day
@@ -301,69 +332,41 @@ if doQ4:
     aug5   = Time( '2022-08-01 00:00:00', scale = 'utc' ).jd
     tarr   = np.linspace( aug1, aug5, 100000 )
     p      = p * u.arcsec.to('rad')
+    sigma  = 5e-3 # mas
+
+    obstarr = np.sort( np.random.uniform( aug1, aug5, 100 ) )
 
     # First just planet on star
 
     X, Y, Z = orbit.getXYZ( orbit.a1, orbit.ws, tarr * u.d.to('yr') )    # Get X, Y, Z in au
     X = X / orbit.d * u.rad.to('mas'); Y = Y / orbit.d * u.rad.to('mas') # Get X, Y in radians
-    
-    plt.clf()
-    plt.plot( -Y, X, 'k-' )
-    plt.show()
 
+    obsX, obsY, obsZ = orbit.getXYZ( orbit.a1, orbit.ws, obstarr * u.d.to('yr') )
+    obsX = obsX / orbit.d * u.rad.to('mas'); obsY = obsY / orbit.d * u.rad.to('mas')
+    obsX += np.random.normal( 0.0, sigma, 100 ); obsY += np.random.normal( 0.0, sigma, 100 )
+    
+    RADecPlots( tarr, -Y * 1e3, X * 1e3, obstarr, -obsY * 1e3, obsX * 1e3, sigma * 1e3, 'plt.pdf', '$\mu$as' )
+    
     # Now planet plus parallax motion
 
-    raplx, decplx = orbit.getPlxMotion( tarr, ra, dec )
+    raplx, decplx = getPlxMotion( tarr, ra, dec, p )
     raplx *= u.rad.to('mas'); decplx *= u.rad.to('mas')
-    
-    plt.clf()
-    plt.plot( raplx, decplx, 'k-' )
-    plt.show()
-
     rat = raplx - Y; dect = decplx + X
 
-    plt.clf()
-    plt.plot( rat, dect, 'k-' )
-    plt.show()
+    obsraplx, obsdecplx = getPlxMotion( obstarr, ra, dec, p )
+    obsraplx *= u.rad.to('mas'); obsdecplx *= u.rad.to('mas')
+    obsrat = obsraplx - obsY; obsdect = obsdecplx + obsX
+
+    RADecPlots( tarr, rat, dect, obstarr, obsrat, obsdect, sigma, 'pltplx.pdf' )
 
     # Now planet plus parallax plus proper motion
 
     rapmt  = pma * ( tarr - tarr[0] ) * u.rad.to('mas')
     decpmt = pmd * ( tarr - tarr[0] ) * u.rad.to('mas')
+    rat += rapmt; dect += decpmt
 
-    raoft += rapmt; decoft += decpmt
-    
-    plt.clf()
-    plt.plot( raoft, decoft, 'k-' )
-    plt.show()
-    
+    obsrapmt  = pma * ( obstarr - tarr[0] ) * u.rad.to('mas')
+    obsdecpmt = pmd * ( obstarr - tarr[0] ) * u.rad.to('mas')
+    obsrat += obsrapmt; obsdect += obsdecpmt
 
-# pdb.set_trace()
-# obstarr   = np.sort( np.random.uniform( aug1, aug5, 100 ) )
-# obssollon = getSolLon( obstarr )
-# obsdellon = p * np.sin( obssollon - lon ) / np.cos( lat )
-# obsdellat = - p * np.sin( lat ) * np.cos( obssollon - lon )
-
-# obslon = lon + obsdellon
-# obslat = lat + obsdellat
-
-# obsra, obsdec = Ecliptic_RADec( obslon, obslat )
-# obsra += pma * ( obstarr - tarr[0] ) - ra
-# obsdec += pmd * ( obstarr - tarr[0] ) - dec
-
-# sigma = 0.2 * u.mas.to('rad')
-
-# obsra += np.random.normal( 0.0, sigma, 100 )
-# obsdec += np.random.normal( 0.0, sigma, 100 )
-
-# rapmt  = pma * ( tarr - tarr[0] )
-# decpmt = pmd * ( tarr - tarr[0] )
-
-# raoft  += rapmt - ra
-# decoft += decpmt - dec
-
-# plt.clf()
-# plt.plot( raoft * u.rad.to('mas'), decoft * u.rad.to('mas'), 'k--' )
-# plt.plot( rapmt * u.rad.to('mas'), decpmt * u.rad.to('mas'), 'r:' )
-# plt.errorbar( obsra * u.rad.to('mas'), obsdec * u.rad.to('mas'), xerr = sigma * u.rad.to('mas'), yerr = sigma * u.rad.to('mas'), fmt = 'k.', ls = 'none' )
-# plt.show()
+    RADecPlots( tarr, rat, dect, obstarr, obsrat, obsdect, sigma, 'pltplxpm.pdf' )
